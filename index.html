@@ -1,0 +1,69 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 1. 시뮬레이션 물리 상수 세팅 (거시적 정상 상태 반영)
+Omega = 2.0       # 지구 자전 각속도
+gamma = 0.4       # 기둥 전체의 거시적 자기장이 만드는 일정한 로렌츠 제동 계수
+a_b = 3.5         # 중심방향 방사형 부력의 크기
+
+# 이산화(Discretization) 매개변수 설정
+dt = 0.005        # 시간 조각 (Delta t)
+steps = 5000      # 총 이산화 단계 수 (시간 흐름의 총 조각)
+
+# 2. 데이터를 담을 이산화 배열 생성 (메모리 미리 할당)
+x = np.zeros(steps)
+y = np.zeros(steps)
+z = np.zeros(steps)
+vx = np.zeros(steps)
+vy = np.zeros(steps)
+vz = np.zeros(steps)
+
+# 3. 초기 조건 설정 (외핵 내부의 임의의 점 (x0, y0, z0)에서 출발)
+x[0], y[0], z[0] = 1.0, 1.0, 1.0
+vx[0], vy[0], vz[0] = 0.1, -0.1, 0.2
+
+# 4. 이산화 루프 연산 (Euler-Cromer 수치해석 기법)
+for k in range(steps - 1):
+    # 현재 위치에서의 3차원 진짜 거리 R (방사형 분모)
+    R_k = np.sqrt(x[k]**2 + y[k]**2 + z[k]**2)
+    
+    # 중심(0,0,0)에서의 특이점(발산) 방지 안전장치
+    if R_k < 1e-5: 
+        R_k = 1e-5
+        
+    # 방향코사인(l, m, n) 성분 자동 계산
+    l_k = x[k] / R_k
+    m_k = y[k] / R_k
+    n_k = z[k] / R_k
+    
+    # 각 성분별 가속도 계산 (우리가 유도했던 방향코사인 미방의 우변)
+    # 코리올리 힘(자전축 회전)은 x, y 평면에만 작용
+    ax =  2 * Omega * vy[k] - gamma * vx[k] + a_b * l_k
+    ay = -2 * Omega * vx[k] - gamma * vy[k] + a_b * m_k
+    az =                    - gamma * vz[k] + a_b * n_k
+    
+    # [이산화 단계 1] 가속도를 이용해 다음 단계의 속도(v) 계산
+    vx[k+1] = vx[k] + ax * dt
+    vy[k+1] = vy[k] + ay * dt
+    vz[k+1] = vz[k] + az * dt
+    
+    # [이산화 단계 2] 업데이트된 속도를 이용해 다음 단계의 위치(x, y, z) 계산
+    x[k+1] = x[k] + vx[k+1] * dt
+    y[k+1] = y[k] + vy[k+1] * dt
+    z[k+1] = z[k] + vz[k+1] * dt
+
+# 5. 3차원 공간 상의 철 입자 이동 궤적 시각화
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# 이산화된 위치 점들을 선으로 연결하여 3차원 궤적 출력
+ax.plot(x, y, z, color='royalblue', lw=2, label='Iron Particle Trajectory (Radial Buoyancy)')
+ax.scatter(x[0], y[0], z[0], color='black', s=100, label='Start Point') # 출발지점
+ax.scatter(0, 0, 0, color='red', s=150, marker='*', label='Earth Center') # 지구 중심
+
+ax.set_title("2.2 Discrete Simulation: Radial Buoyancy with Constant Magnetic Field", fontsize=12)
+ax.set_xlabel("X Axis")
+ax.set_ylabel("Y Axis")
+ax.set_zlabel("Z Axis (Rotation)")
+ax.legend()
+plt.show()
