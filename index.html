@@ -73,8 +73,7 @@
 
         slipOmega.addEventListener('input', (e) => { Omega = parseFloat(e.target.value); document.getElementById('val-omega').innerText = Omega.toFixed(1); });
         slipGamma.addEventListener('input', (e) => { gamma = parseFloat(e.target.value); document.getElementById('val-gamma').innerText = gamma.toFixed(2); });
-        slipAb.addEventListener('input', (e) => { a_b = parseFloat(e.target.value); document.getElementById('val-ab').innerText = a_b.toFixed(1); });
-        slipGm.addEventListener('input', (e) => { GM = parseFloat(e.target.value); document.getElementById('val-gm').innerText = GM.toFixed(1); });
+        slipAb.addEventListener('input', (e) => { a_b = parseFloat(e.target.value); document.getElementById('val-ab').innerText = a_b.toFixed(1); });        slipGm.addEventListener('input', (e) => { GM = parseFloat(e.target.value); document.getElementById('val-gm').innerText = GM.toFixed(1); });
 
         function init() {
             const container = document.getElementById('canvas-container');
@@ -152,11 +151,11 @@
                     const R = Math.sqrt(R_sq);
                     const safeR = R < 1e-3 ? 1e-3 : R; // 중심 특이점 발산 방지 안전장치
 
-                    // 공통 기하학적 인자 계산: (a_b / R) - (GM / R^3)
+                    // 공통 기하학적 인자 계산: (a_b - 1 ) * (GM / R^3)
                     // 부력 벡터(a_b * x/R)와 중력 벡터(-GM * x/R^3)가 방향코사인 성분으로 묶인 형태
-                    const fieldFactor = (a_b / safeR) - (GM / (safeR * safeR * safeR));
+                    const fieldFactor = (a_b -1) * (GM / (safeR * safeR * safeR))
 
-                    // 진짜 뉴턴 역학 + 코리올리 힘 이산화 가속도 수식
+                    // 뉴턴 역학 + 코리올리 힘 이산화 가속도 수식
                     const ax =  2 * Omega * p.vy - gamma * p.vx + fieldFactor * p.x;
                     const ay = -2 * Omega * p.vx - gamma * p.vy + fieldFactor * p.y;
                     const az =                   - gamma * p.vz + fieldFactor * p.z;
