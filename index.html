@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>지구 외핵 방사형 부력 다이너모 시뮬레이션 (나선 진동 수정본)</title>
+    <title>지구 외핵 방사형 다이너모 시뮬레이션 </title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; color: #fff; }
         #canvas-container { width: 100vw; height: 100vh; }
@@ -28,51 +28,59 @@
     <div class="control-panel">
         <h3>Dynamo 2.2 Parameters</h3>
         <div class="slider-group">
-            <label>자전 각속도 (Ω): <span id="val-omega">3.0</span></label>
-            <input type="range" id="slip-omega" min="0" max="10" step="0.1" value="3.0">
+            <label>자전 각속도 (Ω): <span id="val-omega">4.0</span></label>
+            <input type="range" id="slip-omega" min="0" max="10" step="0.1" value="4.0">
         </div>
         <div class="slider-group">
-            <label>자기 제동 계수 (γ): <span id="val-gamma">0.2</span></label>
-            <input type="range" id="slip-gamma" min="0" max="2" step="0.05" value="0.2">
+            <label>자기 제동 계수 (γ): <span id="val-gamma">0.05</span></label>
+            <input type="range" id="slip-gamma" min="0" max="1" step="0.01" value="0.05">
         </div>
         <div class="slider-group">
-            <label>방사형 부력 (a_b): <span id="val-ab">1.5</span></label>
-            <input type="range" id="slip-ab" min="0" max="5" step="0.1" value="1.5">
+            <label>방사형 부력 (a_b): <span id="val-ab">3.0</span></label>
+            <input type="range" id="slip-ab" min="0" max="10" step="0.1" value="3.0">
+        </div>
+        <div class="slider-group">
+            <label>만유인력 상수 (GM): <span id="val-gm">12.0</span></label>
+            <input type="range" id="slip-gm" min="0" max="30" step="0.5" value="12.0">
         </div>
         <button class="btn-reset" onclick="clearTrajectories()">궤적 초기화</button>
     </div>
 
     <div class="instruction">
-        마우스 드래그로 <span>회전</span> | 구체 내부 공간을 <span>클릭</span>하여 나선 진동 궤적 생성
+        마우스 드래그로 <span>회전</span> | 구체 가이드라인 안팎을 <span>클릭</span>하여 정석 나선 진동 궤적 생성
     </div>
 
     <div id="canvas-container"></div>
 
     <script>
-        let Omega = 3.0;
-        let gamma = 0.2;
-        let a_b = 1.5;
-        const k_r = 3.5; // 복원력 계수 (나선 진동을 유도하는 중력 효과)
-        const dt = 0.005;
-        const maxSteps = 4000;
+        // 전역 물리 변수 세팅
+        let Omega = 4.0;
+        let gamma = 0.05;
+        let a_b = 3.0;
+        let GM = 12.0;
+        const dt = 0.003; // 미방 정확도를 위해 시간 간격을 조금 더 촘촘하게 세팅
+        const maxSteps = 5000;
 
         let scene, camera, renderer, controls, earthSphere;
         let raycaster, mouse;
         let activeParticles = [];
 
+        // UI 이벤트 바인딩
         const slipOmega = document.getElementById('slip-omega');
         const slipGamma = document.getElementById('slip-gamma');
         const slipAb = document.getElementById('slip-ab');
+        const slipGm = document.getElementById('slip-gm');
 
         slipOmega.addEventListener('input', (e) => { Omega = parseFloat(e.target.value); document.getElementById('val-omega').innerText = Omega.toFixed(1); });
         slipGamma.addEventListener('input', (e) => { gamma = parseFloat(e.target.value); document.getElementById('val-gamma').innerText = gamma.toFixed(2); });
         slipAb.addEventListener('input', (e) => { a_b = parseFloat(e.target.value); document.getElementById('val-ab').innerText = a_b.toFixed(1); });
+        slipGm.addEventListener('input', (e) => { GM = parseFloat(e.target.value); document.getElementById('val-gm').innerText = GM.toFixed(1); });
 
         function init() {
             const container = document.getElementById('canvas-container');
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(12, 12, 16);
+            camera.position.set(15, 15, 20);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -81,14 +89,14 @@
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            // 가이드 구체 (반지름 4)
+            // 외핵 반지름 가이드선 구체 (반지름 4)
             const sphereGeo = new THREE.SphereGeometry(4, 32, 16);
             const sphereMat = new THREE.MeshBasicMaterial({ color: 0x555577, wireframe: true, transparent: true, opacity: 0.1 });
             earthSphere = new THREE.Mesh(sphereGeo, sphereMat);
             scene.add(earthSphere);
 
-            // 자전축선
-            const zAxisGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -6, 0), new THREE.Vector3(0, 6, 0)]);
+            // 자전축 표시 (시각적 Y축을 자전축으로 매핑)
+            const zAxisGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -8, 0), new THREE.Vector3(0, 8, 0)]);
             const zAxis = new THREE.Line(zAxisGeo, new THREE.LineBasicMaterial({ color: 0xff3333, opacity: 0.3, transparent: true }));
             scene.add(zAxis);
 
@@ -102,7 +110,7 @@
         }
 
         function onSphereClick(event) {
-            if (event.clientX < 320 && event.clientY < 300) return;
+            if (event.clientX < 320 && event.clientY < 350) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -113,9 +121,10 @@
             if (intersects.length > 0) {
                 const pt = intersects[0].point;
 
+                // 물리 미방 계산 좌표계(z가 자전축)와 Three.js 좌표계(Y가 상단축) 싱크 매핑
                 const particle = {
                     x: pt.x, y: pt.z, z: pt.y,
-                    vx: 0.5, vy: -0.5, vz: 0.1, // 초기 횡방향 속도 주입
+                    vx: 0.8, vy: -0.4, vz: 0.5, // 3차원 나선 운동 유도를 위한 초기 가속 섭동값
                     stepCount: 0,
                     points: [pt.clone()],
                     geometry: new THREE.BufferGeometry(),
@@ -129,26 +138,30 @@
             }
         }
 
-        // --- 실시간 이산화 진동 연산 루프 ---
+        // --- 물리 이산화 연산의 핵심 핵심 파트 ---
         function calculateDynamoStep() {
             activeParticles.forEach((p) => {
                 if (p.stepCount >= maxSteps) return;
 
-                for (let i = 0; i < 6; i++) {
+                // 실시간 프레임 드랍 방지를 위해 한 프레임당 8스텝씩 이산화 전개
+                for (let i = 0; i < 8; i++) {
                     if (p.stepCount >= maxSteps) break;
 
-                    const R_k = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
-                    const safeR = R_k < 1e-4 ? 1e-4 : R_k;
+                    // 진짜 3차원 공간 거리 R계산 (R^2 = x^2 + y^2 + z^2)
+                    const R_sq = p.x*p.x + p.y*p.y + p.z*p.z;
+                    const R = Math.sqrt(R_sq);
+                    const safeR = R < 1e-3 ? 1e-3 : R; // 중심 특이점 발산 방지 안전장치
 
-                    const l = p.x / safeR;
-                    const m = p.y / safeR;
-                    const n = p.z / safeR;
+                    // 공통 기하학적 인자 계산: (a_b / R) - (GM / R^3)
+                    // 부력 벡터(a_b * x/R)와 중력 벡터(-GM * x/R^3)가 방향코사인 성분으로 묶인 형태
+                    const fieldFactor = (a_b / safeR) - (GM / (safeR * safeR * safeR));
 
-                    // 복원력(-k_r * 위치)이 추가되어 탈출하지 않고 코리올리 힘과 결합해 나선 진동을 만듦
-                    const ax =  2 * Omega * p.vy - gamma * p.vx + a_b * l - k_r * p.x;
-                    const ay = -2 * Omega * p.vx - gamma * p.vy + a_b * m - k_r * p.y;
-                    const az =                   - gamma * p.vz + a_b * n - k_r * p.z;
+                    // 진짜 뉴턴 역학 + 코리올리 힘 이산화 가속도 수식
+                    const ax =  2 * Omega * p.vy - gamma * p.vx + fieldFactor * p.x;
+                    const ay = -2 * Omega * p.vx - gamma * p.vy + fieldFactor * p.y;
+                    const az =                   - gamma * p.vz + fieldFactor * p.z;
 
+                    // 오일러-크로머 기법 기반의 속도 및 위치 이산화 업데이트
                     p.vx += ax * dt;
                     p.vy += ay * dt;
                     p.vz += az * dt;
@@ -157,6 +170,7 @@
                     p.y += p.vy * dt;
                     p.z += p.vz * dt;
 
+                    // 계산된 물리 좌표계를 다시 Three.js 화면 좌표계(Y-up)로 변환해 저장
                     p.points.push(new THREE.Vector3(p.x, p.z, p.y));
                     p.stepCount++;
                 }
