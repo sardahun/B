@@ -1,69 +1,309 @@
-import numpy as np
-import matplotlib.pyplot as plt
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>지구 외핵 방사형 부력 다이너모 시뮬레이션 (2.2 모델)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        /* UI 컨트롤 패널 */
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 15, 25, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+            width: 280px;
+            pointer-events: auto;
+            z-index: 10;
+        }
+        .control-panel h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 16px;
+            color: #4dadff;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 8px;
+        }
+        .slider-group {
+            margin-bottom: 15px;
+        }
+        .slider-group label {
+            display: block;
+            font-size: 13px;
+            margin-bottom: 5px;
+            color: #ccc;
+        }
+        .slider-group span {
+            float: right;
+            font-weight: bold;
+            color: #fff;
+        }
+        .slider-group input[type="range"] {
+            width: 100%;
+            accent-color: #4dadff;
+        }
+        .btn-reset {
+            width: 100%;
+            background: #4dadff;
+            border: none;
+            color: #000;
+            padding: 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-reset:hover {
+            background: #8cd0ff;
+        }
+        /* 안내 문구 */
+        .instruction {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            font-size: 14px;
+            color: #aaa;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+        }
+        .instruction span {
+            color: #4dadff;
+            font-weight: bold;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
 
-# 1. 시뮬레이션 물리 상수 세팅 (거시적 정상 상태 반영)
-Omega = 2.0       # 지구 자전 각속도
-gamma = 0.4       # 기둥 전체의 거시적 자기장이 만드는 일정한 로렌츠 제동 계수
-a_b = 3.5         # 중심방향 방사형 부력의 크기
+    <div class="control-panel">
+        <h3>Dynamo 2.2 Parameters</h3>
+        <div class="slider-group">
+            <label>자전 각속도 (Ω): <span id="val-omega">2.0</span></label>
+            <input type="range" id="slip-omega" min="0" max="5" step="0.1" value="2.0">
+        </div>
+        <div class="slider-group">
+            <label>자기 제동 계수 (γ): <span id="val-gamma">0.4</span></label>
+            <input type="range" id="slip-gamma" min="0" max="2" step="0.05" value="0.4">
+        </div>
+        <div class="slider-group">
+            <label>방사형 부력 (a_b): <span id="val-ab">3.5</span></label>
+            <input type="range" id="slip-ab" min="0" max="10" step="0.1" value="3.5">
+        </div>
+        <button class="btn-reset" onclick="clearTrajectories()">궤적 초기화</button>
+    </div>
 
-# 이산화(Discretization) 매개변수 설정
-dt = 0.005        # 시간 조각 (Delta t)
-steps = 5000      # 총 이산화 단계 수 (시간 흐름의 총 조각)
+    <div class="instruction">
+        마우스 드래그로 <span>회전</span> | 휠로 <span>줌인/아웃</span> | 구체 표면을 <span>클릭</span>하면 새로운 철 입자 궤적 생성
+    </div>
 
-# 2. 데이터를 담을 이산화 배열 생성 (메모리 미리 할당)
-x = np.zeros(steps)
-y = np.zeros(steps)
-z = np.zeros(steps)
-vx = np.zeros(steps)
-vy = np.zeros(steps)
-vz = np.zeros(steps)
+    <div id="canvas-container"></div>
 
-# 3. 초기 조건 설정 (외핵 내부의 임의의 점 (x0, y0, z0)에서 출발)
-x[0], y[0], z[0] = 1.0, 1.0, 1.0
-vx[0], vy[0], vz[0] = 0.1, -0.1, 0.2
+    <script>
+        // --- 1. 기본 시뮬레이션 변수 세팅 ---
+        let Omega = 2.0;
+        let gamma = 0.4;
+        let a_b = 3.5;
+        const dt = 0.005;
+        const maxSteps = 3000; // 이산화 최대 계산 스텝
 
-# 4. 이산화 루프 연산 (Euler-Cromer 수치해석 기법)
-for k in range(steps - 1):
-    # 현재 위치에서의 3차원 진짜 거리 R (방사형 분모)
-    R_k = np.sqrt(x[k]**2 + y[k]**2 + z[k]**2)
-    
-    # 중심(0,0,0)에서의 특이점(발산) 방지 안전장치
-    if R_k < 1e-5: 
-        R_k = 1e-5
-        
-    # 방향코사인(l, m, n) 성분 자동 계산
-    l_k = x[k] / R_k
-    m_k = y[k] / R_k
-    n_k = z[k] / R_k
-    
-    # 각 성분별 가속도 계산 (우리가 유도했던 방향코사인 미방의 우변)
-    # 코리올리 힘(자전축 회전)은 x, y 평면에만 작용
-    ax =  2 * Omega * vy[k] - gamma * vx[k] + a_b * l_k
-    ay = -2 * Omega * vx[k] - gamma * vy[k] + a_b * m_k
-    az =                    - gamma * vz[k] + a_b * n_k
-    
-    # [이산화 단계 1] 가속도를 이용해 다음 단계의 속도(v) 계산
-    vx[k+1] = vx[k] + ax * dt
-    vy[k+1] = vy[k] + ay * dt
-    vz[k+1] = vz[k] + az * dt
-    
-    # [이산화 단계 2] 업데이트된 속도를 이용해 다음 단계의 위치(x, y, z) 계산
-    x[k+1] = x[k] + vx[k+1] * dt
-    y[k+1] = y[k] + vy[k+1] * dt
-    z[k+1] = z[k] + vz[k+1] * dt
+        // Three.js 전역 객체
+        let scene, camera, renderer, controls, earthSphere;
+        let raycaster, mouse;
+        let activeParticles = []; // 실시간 이산화 계산이 진행 중인 입자 배열
 
-# 5. 3차원 공간 상의 철 입자 이동 궤적 시각화
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
+        // --- 2. 슬라이더 UI 이벤트 바인딩 ---
+        const slipOmega = document.getElementById('slip-omega');
+        const slipGamma = document.getElementById('slip-gamma');
+        const slipAb = document.getElementById('slip-ab');
 
-# 이산화된 위치 점들을 선으로 연결하여 3차원 궤적 출력
-ax.plot(x, y, z, color='royalblue', lw=2, label='Iron Particle Trajectory (Radial Buoyancy)')
-ax.scatter(x[0], y[0], z[0], color='black', s=100, label='Start Point') # 출발지점
-ax.scatter(0, 0, 0, color='red', s=150, marker='*', label='Earth Center') # 지구 중심
+        slipOmega.addEventListener('input', (e) => { Omega = parseFloat(e.target.value); document.getElementById('val-omega').innerText = Omega.toFixed(1); });
+        slipGamma.addEventListener('input', (e) => { gamma = parseFloat(e.target.value); document.getElementById('val-gamma').innerText = gamma.toFixed(2); });
+        slipAb.addEventListener('input', (e) => { a_b = parseFloat(e.target.value); document.getElementById('val-ab').innerText = a_b.toFixed(1); });
 
-ax.set_title("2.2 Discrete Simulation: Radial Buoyancy with Constant Magnetic Field", fontsize=12)
-ax.set_xlabel("X Axis")
-ax.set_ylabel("Y Axis")
-ax.set_zlabel("Z Axis (Rotation)")
-ax.legend()
-plt.show()
+        // --- 3. 3차원 Three.js 환경 초기화 ---
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(15, 15, 20);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // 광원 설치
+            const ambientLight = new THREE.AmbientLight(0x404040, 2);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            // 중앙 구형 좌표계 가이드 (외핵 경계 모사, 반지름 4)
+            const sphereRadius = 4;
+            const sphereGeo = new THREE.SphereGeometry(sphereRadius, 32, 16);
+            const sphereMat = new THREE.MeshBasicMaterial({
+                color: 0x444455,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.15
+            });
+            earthSphere = new THREE.Mesh(sphereGeo, sphereMat);
+            scene.add(earthSphere);
+
+            // 자전축 (Z축 대용, 여기서는 직관성을 위해 우주 표준에 맞춰 상단을 Z축 타겟으로 정의)
+            // Three.js는 기본이 Y-up이므로, 직관적인 계산 매핑을 위해 Z축을 위로 시각화하거나 세팅을 조율함
+            const axisLength = 7;
+            const zAxisGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, -axisLength, 0),
+                new THREE.Vector3(0, axisLength, 0)
+            ]);
+            const zAxisMat = new THREE.LineBasicMaterial({ color: 0xff4d4d, opacity: 0.5, transparent: true });
+            const zAxis = new THREE.Line(zAxisGeo, zAxisMat);
+            scene.add(zAxis);
+
+            // 클릭 레이캐스팅 세팅
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            window.addEventListener('click', onSphereClick, false);
+            window.addEventListener('resize', onWindowResize, false);
+
+            animate();
+        }
+
+        // --- 4. 클릭 시 임의의 점 (x0, y0, z0) 획득 및 입자 생성 ---
+        function onSphereClick(event) {
+            // UI 컨트롤 패널 영역 클릭 시 무시
+            if (event.clientX < 320 && event.clientY < 300) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(earthSphere);
+
+            if (intersects.length > 0) {
+                // 클릭한 3차원 지점 좌표 획득
+                const pt = intersects[0].point;
+
+                // 이산화 연산을 실시간으로 누적할 입자 객체 생성
+                // 계산 매핑의 편의상 시각적 Y축을 물리의 자전축 Z로 취급
+                const particle = {
+                    x: pt.x,
+                    y: pt.z, // 물리의 y
+                    z: pt.y, // 물리의 z (자전축 방향)
+                    vx: 0.1,  // 약간의 초기 섭동 속도
+                    vy: -0.1,
+                    vz: 0.2,
+                    stepCount: 0,
+                    points: [pt.clone()],
+                    geometry: new THREE.BufferGeometry(),
+                    material: new THREE.LineBasicMaterial({ 
+                        color: new THREE.Color().setHSL(Math.random(), 1.0, 0.6), 
+                        linewidth: 2 
+                    }),
+                    lineMesh: null
+                };
+
+                particle.lineMesh = new THREE.Line(particle.geometry, particle.material);
+                scene.add(particle.lineMesh);
+                activeParticles.push(particle);
+            }
+        }
+
+        // --- 5. 핵심: 매 프레임 이산화(Discretization) 점 찍기 연산 ---
+        function calculateDynamoStep() {
+            activeParticles.forEach((p) => {
+                if (p.stepCount >= maxSteps) return;
+
+                // 1 스텝당 여러 번 이산화 연산을 수행해 궤적 전개 속도를 높임
+                for (let i = 0; i < 5; i++) {
+                    if (p.stepCount >= maxSteps) break;
+
+                    const R_k = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+                    const safeR = R_k < 1e-4 ? 1e-4 : R_k;
+
+                    // 방향코사인 (l, m, n)
+                    const l = p.x / safeR;
+                    const m = p.y / safeR;
+                    const n = p.z / safeR;
+
+                    // 3차원 가속도 계산 (2.2 방사형 부력 미방 우변 이산화 대응)
+                    // 물리 좌표계 상의 z가 자전축이므로 코리올리 힘은 x, y 속도 성분에 적용
+                    const ax =  2 * Omega * p.vy - gamma * p.vx + a_b * l;
+                    const ay = -2 * Omega * p.vx - gamma * p.vy + a_b * m;
+                    const az =                   - gamma * p.vz + a_b * n;
+
+                    // 속도 이산화 업데이트
+                    p.vx += ax * dt;
+                    p.vy += ay * dt;
+                    p.vz += az * dt;
+
+                    // 위치 이산화 업데이트
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.z += p.vz * dt;
+
+                    // Three.js 좌표계(Y-up)에 맞게 벡터 리매핑하여 포인트 누적
+                    p.points.push(new THREE.Vector3(p.x, p.z, p.y));
+                    p.stepCount++;
+                }
+
+                // 변경된 이산화 좌표 데이터 매시 업데이트
+                p.geometry.setFromPoints(p.points);
+            });
+        }
+
+        function clearTrajectories() {
+            activeParticles.forEach(p => {
+                scene.remove(p.lineMesh);
+                p.geometry.dispose();
+                p.material.dispose();
+            });
+            activeParticles = [];
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 6. 렌더링 루프 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // 매 프레임 이산화 방정식 계산 가동
+            calculateDynamoStep();
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
