@@ -153,7 +153,7 @@
 
                     // 공통 기하학적 인자 계산: (a_b - 1 ) * (GM / R^3)
                     // 부력 벡터(a_b * x/R)와 중력 벡터(-GM * x/R^3)가 방향코사인 성분으로 묶인 형태
-                    const fieldFactor = (a_b -1) * (GM / (safeR * safeR * safeR))
+                    const fieldFactor = (a_b * r -1) * (GM / (safeR * safeR * safeR))
 
                     // 뉴턴 역학 + 코리올리 힘 이산화 가속도 수식
                     const ax =  2 * Omega * p.vy - gamma * p.vx + fieldFactor * p.x;
