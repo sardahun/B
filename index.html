@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>지구 외핵 다이너모 정석 시뮬레이션 </title>
+    <title>지구 외핵 다이너모 시뮬레이션 (내부 확대 클릭 지원 버전)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; color: #fff; }
         #canvas-container { width: 100vw; height: 100vh; }
@@ -26,38 +26,37 @@
 <body>
 
     <div class="control-panel">
-        <h3>Dynamo 2.2 Final Mesh</h3>
+        <h3>Dynamo 2.3 Zoom-In Ready</h3>
         <div class="slider-group">
-            <label>자전 각속도 (Ω): <span id="val-omega">6.0</span></label>
-            <input type="range" id="slip-omega" min="0" max="15" step="0.1" value="6.0">
+            <label>자전 각속도 (Ω): <span id="val-omega">7.0</span></label>
+            <input type="range" id="slip-omega" min="0" max="15" step="0.1" value="7.0">
         </div>
         <div class="slider-group">
-            <label>자기 제동 계수 (γ): <span id="val-gamma">0.03</span></label>
-            <input type="range" id="slip-gamma" min="0" max="0.5" step="0.01" value="0.03">
+            <label>자기 제동 계수 (γ): <span id="val-gamma">0.02</span></label>
+            <input type="range" id="slip-gamma" min="0" max="0.5" step="0.01" value="0.02">
         </div>
         <div class="slider-group">
-            <label>공간 매핑 상수 (A_b): <span id="val-ab">0.40</span></label>
-            <input type="range" id="slip-ab" min="0.1" max="1.5" step="0.01" value="0.40">
+            <label>공간 매핑 상수 (A_b): <span id="val-ab">0.35</span></label>
+            <input type="range" id="slip-ab" min="0.1" max="1.5" step="0.01" value="0.35">
         </div>
         <div class="slider-group">
-            <label>만유인력 상수 (GM): <span id="val-gm">15.0</span></label>
-            <input type="range" id="slip-gm" min="0" max="40" step="0.5" value="15.0">
+            <label>만유인력 상수 (GM): <span id="val-gm">20.0</span></label>
+            <input type="range" id="slip-gm" min="0" max="40" step="0.5" value="20.0">
         </div>
         <button class="btn-reset" onclick="clearTrajectories()">궤적 초기화</button>
     </div>
 
     <div class="instruction">
-        마우스 드래그로 <span>회전</span> | 구체 가이드라인 안쪽을 <span>클릭</span>하여 정석 나선 기둥 생성
+        휠 스크롤로 <span>확대/축소</span> | 구체 내부로 진입하여 <span>허공을 클릭</span>해도 3차원 궤적 생성 가능
     </div>
 
     <div id="canvas-container"></div>
 
     <script>
-        // 전역 물리 변수 초기 세팅
-        let Omega = 6.0;
-        let gamma = 0.03;
-        let A_b = 0.40; // 평형점 조절을 위한 공간 스케일링 상수 (1 / 0.4 = 반지름 2.5 지점이 밸런스 벽)
-        let GM = 15.0;
+        let Omega = 7.0;
+        let gamma = 0.02;
+        let A_b = 0.35; 
+        let GM = 20.0;
         const dt = 0.003; 
         const maxSteps = 6000; 
 
@@ -65,7 +64,6 @@
         let raycaster, mouse;
         let activeParticles = [];
 
-        // UI 이벤트 동적 매핑
         const slipOmega = document.getElementById('slip-omega');
         const slipGamma = document.getElementById('slip-gamma');
         const slipAb = document.getElementById('slip-ab');
@@ -89,13 +87,13 @@
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            // 외핵 반지름 가이드선 구체 (반지름 4)
+            // 가이드선 구체 (반지름 4) - 내부 구각 구조를 더 잘 보려고 선을 연하게 세팅
             const sphereGeo = new THREE.SphereGeometry(4, 32, 16);
-            const sphereMat = new THREE.MeshBasicMaterial({ color: 0x555577, wireframe: true, transparent: true, opacity: 0.1 });
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0x555577, wireframe: true, transparent: true, opacity: 0.05 });
             earthSphere = new THREE.Mesh(sphereGeo, sphereMat);
             scene.add(earthSphere);
 
-            // 자전축 표시 (시각적 Y축을 자전축으로 매핑)
+            // 자전축 (시각적 Y축을 자전축으로 매핑)
             const zAxisGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -8, 0), new THREE.Vector3(0, 8, 0)]);
             const zAxis = new THREE.Line(zAxisGeo, new THREE.LineBasicMaterial({ color: 0xff3333, opacity: 0.25, transparent: true }));
             scene.add(zAxis);
@@ -103,42 +101,44 @@
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
 
-            window.addEventListener('click', onSphereClick, false);
+            window.addEventListener('click', onFreeSpaceClick, false);
             window.addEventListener('resize', onWindowResize, false);
 
             animate();
         }
 
-        function onSphereClick(event) {
+        // [핵심 변경점] 구 표면이 아니라 3차원 공간상의 카메라 스페이스 평면을 클릭하는 방식으로 변경
+        function onFreeSpaceClick(event) {
+            // 조작 패널 클릭 시 무시
             if (event.clientX < 320 && event.clientY < 350) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObject(earthSphere);
+            // 카메라가 바라보고 있는 카메라 시선 벡터상에서 Controls의 타겟(원점 부근) 깊이 평면을 계산
+            const targetPlaneProjector = new THREE.Vector3(mouse.x, mouse.y, 0.5).unproject(camera);
+            targetPlaneProjector.sub(camera.position).normalize();
+            
+            // 카메라에서 원점(0,0,0)까지의 거리를 기준 깊이로 설정하여 3차원 좌표 역산
+            const distance = camera.position.distanceTo(controls.target);
+            const pt = new THREE.Vector3().copy(camera.position).add(targetPlaneProjector.multiplyScalar(distance));
 
-            if (intersects.length > 0) {
-                const pt = intersects[0].point;
+            // 물리 계산 좌표계(z가 자전축)와 Three.js 화면 좌표계(Y가 상단축) 싱크 매핑
+            const particle = {
+                x: pt.x, y: pt.z, z: pt.y,
+                vx: 0.4, vy: -0.3, vz: 0.5, 
+                stepCount: 0,
+                points: [pt.clone()],
+                geometry: new THREE.BufferGeometry(),
+                material: new THREE.LineBasicMaterial({ color: new THREE.Color().setHSL(Math.random(), 1.0, 0.6), linewidth: 2 }),
+                lineMesh: null
+            };
 
-                // 물리 계산 좌표계(z가 자전축)와 Three.js 화면 좌표계(Y가 상단축) 싱크 매핑
-                const particle = {
-                    x: pt.x, y: pt.z, z: pt.y,
-                    vx: 0.6, vy: -0.4, vz: 0.7, // 초기 수용돌이 나선을 뽑아내기 위한 3차원 속도 섭동
-                    stepCount: 0,
-                    points: [pt.clone()],
-                    geometry: new THREE.BufferGeometry(),
-                    material: new THREE.LineBasicMaterial({ color: new THREE.Color().setHSL(Math.random(), 1.0, 0.6), linewidth: 2 }),
-                    lineMesh: null
-                };
-
-                particle.lineMesh = new THREE.Line(particle.geometry, particle.material);
-                scene.add(particle.lineMesh);
-                activeParticles.push(particle);
-            }
+            particle.lineMesh = new THREE.Line(particle.geometry, particle.material);
+            scene.add(particle.lineMesh);
+            activeParticles.push(particle);
         }
 
-        // --- 물리 이산화 연산 파트 (네가 묶어준 수식 보완본) ---
         function calculateDynamoStep() {
             activeParticles.forEach((p) => {
                 if (p.stepCount >= maxSteps) return;
@@ -146,23 +146,18 @@
                 for (let i = 0; i < 8; i++) {
                     if (p.stepCount >= maxSteps) break;
 
-                    // 1. 진짜 3차원 공간 거리 R 계산
                     const R_sq = p.x*p.x + p.y*p.y + p.z*p.z;
                     const R = Math.sqrt(R_sq);
                     
-                    // [핵심 보안 1] 중심점 분모 폭발(Infinity) 방지 하한선 지정
-                    const safeR = R < 0.6 ? 0.6 : R; 
+                    const safeR = R < 0.5 ? 0.5 : R; 
 
-                    // [핵심 보안 2] 네가 유도한 수식 부호 및 밸런스 정규화 매핑: (1.0 - A_b * R) * GM / R^3
-                    // R > 2.5 이면 음수가 되어 안쪽으로 당기고, R < 2.5 이면 양수가 되어 밖으로 밀어냄
-                    const fieldFactor = - (GM * (1.0 - A_b * safeR)) / (safeR * safeR * safeR);
+                    // 정석 물리 부호: (A_b * safeR - 1.0) * GM / R^3
+                    const fieldFactor = (GM * (A_b * safeR - 1.0)) / (safeR * safeR * safeR);
 
-                    // 2. 정석 다이너모 지배 방정식 가속도 계산
                     const ax =  2 * Omega * p.vy - gamma * p.vx + fieldFactor * p.x;
                     const ay = -2 * Omega * p.vx - gamma * p.vy + fieldFactor * p.y;
                     const az =                   - gamma * p.vz + fieldFactor * p.z;
 
-                    // [핵심 보안 3] 속도 예측 제어 기법(Semi-implicit Euler)으로 튕김 현상 억제
                     let next_vx = p.vx + ax * dt;
                     let next_vy = p.vy + ay * dt;
                     let next_vz = p.vz + az * dt;
@@ -175,13 +170,11 @@
                     p.vy = next_vy;
                     p.vz = next_vz;
 
-                    // 계산 중 발생할 수 있는 이상치(NaN) 필터링 2차 안전장치
                     if (isNaN(p.x) || Math.abs(p.x) > 50) {
                         p.stepCount = maxSteps;
                         break;
                     }
 
-                    // 계산된 물리 좌표계를 다시 Three.js 화면 좌표계(Y-up)로 변환해 저장
                     p.points.push(new THREE.Vector3(p.x, p.z, p.y));
                     p.stepCount++;
                 }
