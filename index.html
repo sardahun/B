@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>지구 외핵 다이너모 시뮬레이션 (내부 확대 클릭 지원 버전)</title>
+    <title>지구 외핵 다이너모 시뮬레이션 </title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; color: #fff; }
         #canvas-container { width: 100vw; height: 100vh; }
@@ -16,6 +16,16 @@
         .slider-group label { display: block; font-size: 13px; margin-bottom: 5px; color: #ccc; }
         .slider-group span { float: right; font-weight: bold; color: #fff; }
         .slider-group input[type="range"] { width: 100%; accent-color: #4dadff; }
+        
+        /* 토글 스위치 스타일링 */
+        .toggle-group { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #ccc; }
+        .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider-toggle { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .3s; border-radius: 22px; }
+        .slider-toggle:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider-toggle { background-color: #4dadff; }
+        input:checked + .slider-toggle:before { transform: translateX(22px); }
+
         .btn-reset { width: 100%; background: #4dadff; border: none; color: #000; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; }
         .instruction { position: absolute; bottom: 20px; width: 100%; text-align: center; font-size: 14px; color: #aaa; z-index: 10; }
         .instruction span { color: #4dadff; font-weight: bold; }
@@ -26,10 +36,10 @@
 <body>
 
     <div class="control-panel">
-        <h3>Dynamo 2.3 Zoom-In Ready</h3>
+        <h3>Dynamo 2.6 Boundary Switch</h3>
         <div class="slider-group">
-            <label>자전 각속도 (Ω): <span id="val-omega">7.0</span></label>
-            <input type="range" id="slip-omega" min="0" max="15" step="0.1" value="7.0">
+            <label>자전 각속도 (Ω): <span id="val-omega">8.0</span></label>
+            <input type="range" id="slip-omega" min="0" max="15" step="0.1" value="8.0">
         </div>
         <div class="slider-group">
             <label>자기 제동 계수 (γ): <span id="val-gamma">0.02</span></label>
@@ -43,24 +53,34 @@
             <label>만유인력 상수 (GM): <span id="val-gm">20.0</span></label>
             <input type="range" id="slip-gm" min="0" max="40" step="0.5" value="20.0">
         </div>
+
+        <div class="toggle-group">
+            <label for="toggle-boundary">외핵 경계벽(물리 차단) 활성화</label>
+            <label class="switch">
+                <input type="checkbox" id="toggle-boundary" checked>
+                <span class="slider-toggle"></span>
+            </label>
+        </div>
+
         <button class="btn-reset" onclick="clearTrajectories()">궤적 초기화</button>
     </div>
 
     <div class="instruction">
-        휠 스크롤로 <span>확대/축소</span> | 구체 내부로 진입하여 <span>허공을 클릭</span>해도 3차원 궤적 생성 가능
+        토글 스위치로 <span>경계 조건</span>을 변경하며 반지름 고정 현상 비교 관찰
     </div>
 
     <div id="canvas-container"></div>
 
     <script>
-        let Omega = 7.0;
+        let Omega = 8.0; 
         let gamma = 0.02;
         let A_b = 0.35; 
         let GM = 20.0;
+        let useBoundary = true; // 경계 조건 활성화 여부 변수
         const dt = 0.003; 
         const maxSteps = 6000; 
 
-        let scene, camera, renderer, controls, earthSphere;
+        let scene, camera, renderer, controls, outerCoreSphere, innerCoreSphere;
         let raycaster, mouse;
         let activeParticles = [];
 
@@ -68,11 +88,19 @@
         const slipGamma = document.getElementById('slip-gamma');
         const slipAb = document.getElementById('slip-ab');
         const slipGm = document.getElementById('slip-gm');
+        const toggleBoundary = document.getElementById('toggle-boundary');
 
         slipOmega.addEventListener('input', (e) => { Omega = parseFloat(e.target.value); document.getElementById('val-omega').innerText = Omega.toFixed(1); });
         slipGamma.addEventListener('input', (e) => { gamma = parseFloat(e.target.value); document.getElementById('val-gamma').innerText = gamma.toFixed(2); });
         slipAb.addEventListener('input', (e) => { A_b = parseFloat(e.target.value); document.getElementById('val-ab').innerText = A_b.toFixed(2); });
         slipGm.addEventListener('input', (e) => { GM = parseFloat(e.target.value); document.getElementById('val-gm').innerText = GM.toFixed(1); });
+        
+        // 토글 이벤트 리스너: 체크박스 상태에 따라 물리 계산 스위칭 및 시각적 격자 구체 숨김/노출
+        toggleBoundary.addEventListener('change', (e) => { 
+            useBoundary = e.target.checked; 
+            outerCoreSphere.visible = useBoundary;
+            innerCoreSphere.visible = useBoundary;
+        });
 
         function init() {
             const container = document.getElementById('canvas-container');
@@ -87,15 +115,21 @@
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            // 가이드선 구체 (반지름 4) - 내부 구각 구조를 더 잘 보려고 선을 연하게 세팅
-            const sphereGeo = new THREE.SphereGeometry(4, 32, 16);
-            const sphereMat = new THREE.MeshBasicMaterial({ color: 0x555577, wireframe: true, transparent: true, opacity: 0.05 });
-            earthSphere = new THREE.Mesh(sphereGeo, sphereMat);
-            scene.add(earthSphere);
+            // 외핵 바깥 벽 (CMB - 반지름 4)
+            const outerGeo = new THREE.SphereGeometry(4, 32, 16);
+            const outerMat = new THREE.MeshBasicMaterial({ color: 0x555577, wireframe: true, transparent: true, opacity: 0.05 });
+            outerCoreSphere = new THREE.Mesh(outerGeo, outerMat);
+            scene.add(outerCoreSphere);
 
-            // 자전축 (시각적 Y축을 자전축으로 매핑)
+            // 외핵 안쪽 벽 (ICB - 반지름 1.5)
+            const innerGeo = new THREE.SphereGeometry(1.5, 24, 12);
+            const innerMat = new THREE.MeshBasicMaterial({ color: 0xffaa44, wireframe: true, transparent: true, opacity: 0.08 });
+            innerCoreSphere = new THREE.Mesh(innerGeo, innerMat);
+            scene.add(innerCoreSphere);
+
+            // 자전축 (시각적 Y축)
             const zAxisGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -8, 0), new THREE.Vector3(0, 8, 0)]);
-            const zAxis = new THREE.Line(zAxisGeo, new THREE.LineBasicMaterial({ color: 0xff3333, opacity: 0.25, transparent: true }));
+            const zAxis = new THREE.Line(zAxisGeo, new THREE.LineBasicMaterial({ color: 0xff3333, opacity: 0.3, transparent: true }));
             scene.add(zAxis);
 
             raycaster = new THREE.Raycaster();
@@ -107,26 +141,22 @@
             animate();
         }
 
-        // [핵심 변경점] 구 표면이 아니라 3차원 공간상의 카메라 스페이스 평면을 클릭하는 방식으로 변경
         function onFreeSpaceClick(event) {
-            // 조작 패널 클릭 시 무시
-            if (event.clientX < 320 && event.clientY < 350) return;
+            // 조작 패널 영역 클릭 차단 (토글 스위치 조작 영역까지 커버하도록 범위 확장)
+            if (event.clientX < 320 && event.clientY < 380) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-            // 카메라가 바라보고 있는 카메라 시선 벡터상에서 Controls의 타겟(원점 부근) 깊이 평면을 계산
             const targetPlaneProjector = new THREE.Vector3(mouse.x, mouse.y, 0.5).unproject(camera);
             targetPlaneProjector.sub(camera.position).normalize();
             
-            // 카메라에서 원점(0,0,0)까지의 거리를 기준 깊이로 설정하여 3차원 좌표 역산
             const distance = camera.position.distanceTo(controls.target);
             const pt = new THREE.Vector3().copy(camera.position).add(targetPlaneProjector.multiplyScalar(distance));
 
-            // 물리 계산 좌표계(z가 자전축)와 Three.js 화면 좌표계(Y가 상단축) 싱크 매핑
             const particle = {
                 x: pt.x, y: pt.z, z: pt.y,
-                vx: 0.4, vy: -0.3, vz: 0.5, 
+                vx: 0.3, vy: -0.2, vz: 0.4, 
                 stepCount: 0,
                 points: [pt.clone()],
                 geometry: new THREE.BufferGeometry(),
@@ -146,12 +176,37 @@
                 for (let i = 0; i < 8; i++) {
                     if (p.stepCount >= maxSteps) break;
 
-                    const R_sq = p.x*p.x + p.y*p.y + p.z*p.z;
-                    const R = Math.sqrt(R_sq);
+                    let R_sq = p.x*p.x + p.y*p.y + p.z*p.z;
+                    let R = Math.sqrt(R_sq);
                     
-                    const safeR = R < 0.5 ? 0.5 : R; 
+                    // [실시간 분기] 토글이 켜져있을 때만 경계 충돌 물리 적용
+                    if (useBoundary) {
+                        // 1. 바깥 벽 차단 (R=4)
+                        if (R >= 4.0) {
+                            const nx = p.x / R; const ny = p.y / R; const nz = p.z / R;
+                            const v_dot_n = p.vx*nx + p.vy*ny + p.vz*nz;
+                            if (v_dot_n > 0) {
+                                p.vx -= v_dot_n * nx; p.vy -= v_dot_n * ny; p.vz -= v_dot_n * nz;
+                            }
+                            p.x = nx * 3.98; p.y = ny * 3.98; p.z = nz * 3.98;
+                            R = 3.98; R_sq = R*R;
+                        }
+                        // 2. 안쪽 벽 차단 (R=1.5)
+                        if (R <= 1.5) {
+                            const nx = p.x / R; const ny = p.y / R; const nz = p.z / R;
+                            const v_dot_n = p.vx*nx + p.vy*ny + p.vz*nz;
+                            if (v_dot_n < 0) {
+                                p.vx -= v_dot_n * nx * 1.5; p.vy -= v_dot_n * ny * 1.5; p.vz -= v_dot_n * nz * 1.5;
+                            }
+                            p.x = nx * 1.52; p.y = ny * 1.52; p.z = nz * 1.52;
+                            R = 1.52; R_sq = R*R;
+                        }
+                    } else {
+                        // 토글이 꺼져있을 때(무한 유체 스페이스) 최소 중심 붕괴만 방지
+                        if (R < 0.4) { R = 0.4; R_sq = R*R; }
+                    }
 
-                    // 정석 물리 부호: (A_b * safeR - 1.0) * GM / R^3
+                    const safeR = R;
                     const fieldFactor = (GM * (A_b * safeR - 1.0)) / (safeR * safeR * safeR);
 
                     const ax =  2 * Omega * p.vy - gamma * p.vx + fieldFactor * p.x;
@@ -170,7 +225,8 @@
                     p.vy = next_vy;
                     p.vz = next_vz;
 
-                    if (isNaN(p.x) || Math.abs(p.x) > 50) {
+                    // 경계가 꺼진 상태에서 입자가 화면 밖으로 너무 멀어지면 연산 강제 종료
+                    if (isNaN(p.x) || Math.abs(p.x) > 100) {
                         p.stepCount = maxSteps;
                         break;
                     }
